@@ -17,6 +17,8 @@ const matchHighlightDecoration = vscode.window.createTextEditorDecorationType({
   border: '1px solid',
   borderColor: new vscode.ThemeColor('editor.findMatchHighlightBorder'),
   rangeBehavior: vscode.DecorationRangeBehavior.ClosedClosed,
+  overviewRulerColor: new vscode.ThemeColor('editorOverviewRuler.findMatchForeground'),
+  overviewRulerLane: vscode.OverviewRulerLane.Center,
 });
 
 const matchLineDecoration = vscode.window.createTextEditorDecorationType({
@@ -31,6 +33,8 @@ export class FastSearchViewProvider implements vscode.WebviewViewProvider {
   private lastSearchResult: SearchResult | undefined;
   private previewEditor: vscode.TextEditor | undefined;
   private currentSearchId = 0;
+  private currentFileMatches: { lineNumber: number; matchStart: number; matchEnd: number }[] = [];
+  private currentMatchIndex = -1;
 
   constructor(
     private extensionUri: vscode.Uri,
@@ -61,6 +65,9 @@ export class FastSearchViewProvider implements vscode.WebviewViewProvider {
           break;
         case 'openInEditor':
           await this.openFileInEditor(message.payload.fileId);
+          break;
+        case 'navigateMatch':
+          this.navigateToMatch(message.payload.direction);
           break;
         case 'search': {
           const searchId = ++this.currentSearchId;
@@ -172,8 +179,18 @@ export class FastSearchViewProvider implements vscode.WebviewViewProvider {
     if (!fileResult || fileResult.matches.length === 0) {
       editor.setDecorations(matchHighlightDecoration, []);
       editor.setDecorations(matchLineDecoration, []);
+      this.currentFileMatches = [];
+      this.currentMatchIndex = -1;
       return;
     }
+
+    // Store matches for left/right arrow navigation
+    this.currentFileMatches = fileResult.matches.map(m => ({
+      lineNumber: m.lineNumber,
+      matchStart: m.matchStart,
+      matchEnd: m.matchEnd,
+    }));
+    this.currentMatchIndex = 0;
 
     const matchRanges: vscode.DecorationOptions[] = [];
     const lineRanges: vscode.DecorationOptions[] = [];
@@ -208,6 +225,33 @@ export class FastSearchViewProvider implements vscode.WebviewViewProvider {
         vscode.TextEditorRevealType.InCenter
       );
     }
+  }
+
+  private navigateToMatch(direction: 'next' | 'prev'): void {
+    if (this.currentFileMatches.length === 0 || !this.previewEditor) return;
+
+    if (direction === 'next') {
+      this.currentMatchIndex = (this.currentMatchIndex + 1) % this.currentFileMatches.length;
+    } else {
+      this.currentMatchIndex = (this.currentMatchIndex - 1 + this.currentFileMatches.length) % this.currentFileMatches.length;
+    }
+
+    const match = this.currentFileMatches[this.currentMatchIndex];
+    const line = match.lineNumber - 1;
+    const pos = new vscode.Position(line, match.matchStart);
+    const endPos = new vscode.Position(line, match.matchEnd);
+
+    this.previewEditor.selection = new vscode.Selection(pos, endPos);
+    this.previewEditor.revealRange(
+      new vscode.Range(pos, endPos),
+      vscode.TextEditorRevealType.InCenter
+    );
+
+    // Send current match index back to webview for display
+    this.view?.webview.postMessage({
+      type: 'matchNavigated',
+      payload: { current: this.currentMatchIndex + 1, total: this.currentFileMatches.length },
+    });
   }
 
   private getHtmlForWebview(webview: vscode.Webview): string {

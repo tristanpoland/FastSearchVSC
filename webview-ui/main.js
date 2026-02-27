@@ -92,6 +92,12 @@
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       navigateFileList(-1);
+    } else if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      vscode.postMessage({ type: 'navigateMatch', payload: { direction: 'next' } });
+    } else if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      vscode.postMessage({ type: 'navigateMatch', payload: { direction: 'prev' } });
     } else if (e.key === 'Enter') {
       e.preventDefault();
       if (debounceTimer) clearTimeout(debounceTimer);
@@ -381,6 +387,16 @@
           statusText.textContent = `${status.fileCount} files${terms}`;
           statusText.className = 'status-ready';
           if (clearBtn) clearBtn.style.display = status.fileCount > 0 ? 'flex' : 'none';
+        }
+        break;
+      }
+      case 'matchNavigated': {
+        const { current, total } = message.payload;
+        const el = document.getElementById('summary-text');
+        if (el && !isSearching) {
+          let text = `${currentResults.totalMatches} match${currentResults.totalMatches !== 1 ? 'es' : ''} in ${currentResults.files.length} file${currentResults.files.length !== 1 ? 's' : ''}`;
+          text += ` — ${current} of ${total} in file`;
+          el.textContent = text;
         }
         break;
       }

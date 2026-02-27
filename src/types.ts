@@ -95,6 +95,7 @@ export type WebviewMessage =
   | { type: 'requestFileContent'; payload: { fileId: number } }
   | { type: 'openFile'; payload: { fileId: number } }
   | { type: 'openInEditor'; payload: { fileId: number } }
+  | { type: 'navigateMatch'; payload: { direction: 'next' | 'prev' } }
   | { type: 'requestReindex' }
   | { type: 'clearIndex' }
   | { type: 'ready' };
