@@ -1,0 +1,44 @@
+{
+  "name": "fastsearch",
+  "displayName": "FastSearch",
+  "description": "Lightning-fast indexed full-text search with natural language queries",
+  "version": "0.1.0",
+  "publisher": "fastsearch",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onWebviewPanel:fastSearchPanel"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "fastsearch.open",
+        "title": "FastSearch: Open Search"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "fastsearch.open",
+        "key": "ctrl+shift+f",
+        "mac": "cmd+shift+f"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^20.0.0",
+    "esbuild": "^0.20.0",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "ignore": "^5.3.0"
+  }
+}
