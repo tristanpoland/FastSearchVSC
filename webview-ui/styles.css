@@ -176,6 +176,13 @@ body {
   gap: 6px;
 }
 
+.file-list-summary #summary-text {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .sort-select {
   background: var(--fs-button-bg);
   color: var(--fs-fg);
@@ -196,6 +203,22 @@ body {
 .sort-select option {
   background: var(--fs-bg);
   color: var(--fs-fg);
+}
+
+/* red button shown when results were truncated */
+.show-all-btn {
+  padding: 2px 6px;
+  background: #e5534b;
+  color: #fff;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.show-all-btn:hover {
+  background: #c0453e;
 }
 
 .file-item {

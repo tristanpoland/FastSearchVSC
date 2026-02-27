@@ -14,7 +14,12 @@ export class SearchEngine {
   }
 
   async search(request: SearchRequest, onResult?: SearchResultCallback): Promise<SearchResult> {
-    const maxResults = request.maxResults ?? 1000;
+    // default to 1k unless caller supplied a value
+    // treat zero or negative as "no limit" so the UI can request show-all
+    let maxResults = request.maxResults ?? 1000;
+    if (maxResults <= 0) {
+      maxResults = Infinity;
+    }
     const start = performance.now();
 
     let files;

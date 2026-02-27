@@ -60,8 +60,12 @@
 
   // ── Search ──
   let debounceTimer = null;
+  // when non-undefined the value supplied here will be sent as `maxResults`
+  // to the extension.  the UI itself doesn't track any limit, so we just
+  // pass the number along.  using a huge value (e.g. Number.MAX_SAFE_INTEGER)
+  // is sufficient for "show all" in practice.
 
-  function doSearch() {
+  function doSearch(overrideMax) {
     const query = searchInput.value.trim();
     if (query.length > 0) {
       currentSearchQuery = query;
@@ -72,7 +76,13 @@
       selectedFileIndex = -1;
       fileListPanel.innerHTML = '';
       ensureSummaryRow();
-      vscode.postMessage({ type: 'search', payload: { query, mode: currentMode } });
+
+      const payload = { query, mode: currentMode };
+      if (overrideMax !== undefined) {
+        payload.maxResults = overrideMax;
+      }
+
+      vscode.postMessage({ type: 'search', payload });
     } else {
       currentResults = { files: [], totalMatches: 0, truncated: false, elapsed: 0 };
       isSearching = false;
@@ -189,6 +199,20 @@
         <option value="recent"${sortOrder === 'recent' ? ' selected' : ''}>Recent first</option>
         <option value="alpha"${sortOrder === 'alpha' ? ' selected' : ''}>A → Z</option>
       `;
+      summaryRow.appendChild(sortSelect);
+
+      // button used to re-run the previous query without the 1k result cap
+      const showAllBtn = document.createElement('button');
+      showAllBtn.id = 'show-all-btn';
+      showAllBtn.className = 'show-all-btn';
+      showAllBtn.textContent = 'Show all';
+      showAllBtn.style.display = 'none';
+      showAllBtn.title = 'Run search without truncation';
+      showAllBtn.addEventListener('click', () => {
+        // use a very large number to effectively disable truncation
+        doSearch(Number.MAX_SAFE_INTEGER);
+      });
+      summaryRow.appendChild(showAllBtn);
       sortSelect.addEventListener('change', () => {
         sortOrder = sortSelect.value;
         saveState();
@@ -217,6 +241,12 @@
         text += ' (truncated)';
       }
       el.textContent = text;
+
+      // show/hide the "show all" button depending on truncation state
+      const showAllBtn = document.getElementById('show-all-btn');
+      if (showAllBtn) {
+        showAllBtn.style.display = currentResults.truncated ? 'inline-block' : 'none';
+      }
     }
   }
 

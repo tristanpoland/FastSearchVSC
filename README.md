@@ -17,6 +17,7 @@ Lightning-fast indexed full-text search for VS Code. Builds an in-memory inverte
 - **Editor integration** — clicking a result opens the file with all matches highlighted in the editor, with scrollbar indicators showing match positions at a glance.
 - **Keyboard-driven** — Up/Down to move between files, Left/Right to jump between matches within a file, Enter to search, Escape to blur.
 - **Theme-aware** — uses VS Code's CSS variables so it looks native in any theme.
+- **Full result button** — if the result set is truncated (default cap of 1k matches), a red "Show all" button appears in the summary row. Click it to rerun the search without the cap.
 
 ## Usage
 
