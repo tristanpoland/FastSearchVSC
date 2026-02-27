@@ -1,21 +1,26 @@
 import * as vscode from 'vscode';
 import { IndexManager } from './indexer/IndexManager.js';
-import { FastSearchPanel } from './webview/FastSearchPanel.js';
+import { FastSearchViewProvider } from './webview/FastSearchPanel.js';
 
 let indexManager: IndexManager | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
   indexManager = new IndexManager(context);
 
-  // Register the open command
+  const provider = new FastSearchViewProvider(context.extensionUri, indexManager);
+
   context.subscriptions.push(
-    vscode.commands.registerCommand('fastsearch.open', () => {
-      FastSearchPanel.createOrShow(context.extensionUri, indexManager!);
+    vscode.window.registerWebviewViewProvider(FastSearchViewProvider.viewType, provider, {
+      webviewOptions: { retainContextWhenHidden: true },
     })
   );
 
-  // Register serializer for webview restoration across reloads
-  FastSearchPanel.registerSerializer(context, indexManager);
+  // Ctrl+Shift+F focuses the sidebar search view
+  context.subscriptions.push(
+    vscode.commands.registerCommand('fastsearch.focus', () => {
+      vscode.commands.executeCommand('fastsearch.searchView.focus');
+    })
+  );
 
   // Begin indexing in background
   indexManager.initialize();

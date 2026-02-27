@@ -1,4 +1,4 @@
-import { FileSearchResult, NaturalQueryNode, SearchMatch, FileEntry, ContentReader } from '../types.js';
+import { FileSearchResult, NaturalQueryNode, SearchMatch, FileEntry, ContentReader, SearchResultCallback } from '../types.js';
 import { InvertedIndex } from '../indexer/InvertedIndex.js';
 
 export class NaturalSearch {
@@ -7,7 +7,11 @@ export class NaturalSearch {
     private readContent: ContentReader
   ) {}
 
-  async execute(ast: NaturalQueryNode, maxResults: number): Promise<FileSearchResult[]> {
+  async execute(
+    ast: NaturalQueryNode,
+    maxResults: number,
+    onResult?: SearchResultCallback
+  ): Promise<FileSearchResult[]> {
     const fileIds = await this.evaluateNode(ast);
     const results: FileSearchResult[] = [];
     let totalMatches = 0;
@@ -23,14 +27,20 @@ export class NaturalSearch {
 
       const matches = this.findMatchesInFile(file, content, ast, maxResults - totalMatches);
       if (matches.length > 0) {
-        results.push({
+        const fileResult: FileSearchResult = {
           fileId,
           relativePath: file.relativePath,
           language: file.language,
           matchCount: matches.length,
           matches,
-        });
+        };
+        results.push(fileResult);
         totalMatches += matches.length;
+
+        if (onResult) {
+          const shouldContinue = onResult(fileResult, totalMatches);
+          if (!shouldContinue) break;
+        }
       }
     }
 

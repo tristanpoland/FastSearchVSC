@@ -1,4 +1,4 @@
-import { FileEntry, FileSearchResult, SearchMatch, ContentReader } from '../types.js';
+import { FileEntry, FileSearchResult, SearchMatch, ContentReader, SearchResultCallback } from '../types.js';
 
 export class RegexSearch {
   constructor(
@@ -6,7 +6,11 @@ export class RegexSearch {
     private readContent: ContentReader
   ) {}
 
-  async execute(pattern: string, maxResults: number): Promise<FileSearchResult[]> {
+  async execute(
+    pattern: string,
+    maxResults: number,
+    onResult?: SearchResultCallback
+  ): Promise<FileSearchResult[]> {
     let regex: RegExp;
     try {
       regex = new RegExp(pattern, 'gm');
@@ -52,13 +56,19 @@ export class RegexSearch {
       }
 
       if (matches.length > 0) {
-        results.push({
+        const fileResult: FileSearchResult = {
           fileId,
           relativePath: file.relativePath,
           language: file.language,
           matchCount: matches.length,
           matches,
-        });
+        };
+        results.push(fileResult);
+
+        if (onResult) {
+          const shouldContinue = onResult(fileResult, totalMatches);
+          if (!shouldContinue) break;
+        }
       }
     }
 

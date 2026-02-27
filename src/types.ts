@@ -78,8 +78,13 @@ export interface IndexStatus {
 
 export type ContentReader = (fileId: number) => Promise<string | undefined>;
 
+/** Called per-file as results stream in. Return false to abort the search. */
+export type SearchResultCallback = (file: FileSearchResult, totalMatchesSoFar: number) => boolean;
+
 export type ExtensionMessage =
   | { type: 'searchResults'; payload: SearchResult }
+  | { type: 'searchResultBatch'; payload: { searchId: number; file: FileSearchResult; totalMatches: number; fileCount: number } }
+  | { type: 'searchComplete'; payload: { searchId: number; totalMatches: number; fileCount: number; truncated: boolean; elapsed: number } }
   | { type: 'fileContent'; payload: { fileId: number; content: string; language: string; relativePath: string } }
   | { type: 'indexStatus'; payload: IndexStatus }
   | { type: 'error'; payload: { message: string } };
@@ -87,6 +92,8 @@ export type ExtensionMessage =
 export type WebviewMessage =
   | { type: 'search'; payload: SearchRequest }
   | { type: 'requestFileContent'; payload: { fileId: number } }
+  | { type: 'openFile'; payload: { fileId: number } }
+  | { type: 'openInEditor'; payload: { fileId: number } }
   | { type: 'requestReindex' }
   | { type: 'ready' };
 

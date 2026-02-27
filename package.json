@@ -9,23 +9,39 @@
   },
   "categories": ["Other"],
   "main": "./dist/extension.js",
-  "activationEvents": [
-    "onWebviewPanel:fastSearchPanel"
-  ],
+  "activationEvents": [],
   "contributes": {
     "commands": [
       {
-        "command": "fastsearch.open",
-        "title": "FastSearch: Open Search"
+        "command": "fastsearch.focus",
+        "title": "FastSearch: Focus Search"
       }
     ],
     "keybindings": [
       {
-        "command": "fastsearch.open",
+        "command": "fastsearch.focus",
         "key": "ctrl+shift+f",
         "mac": "cmd+shift+f"
       }
-    ]
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "fastsearch",
+          "title": "FastSearch",
+          "icon": "media/search-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "fastsearch": [
+        {
+          "type": "webview",
+          "id": "fastsearch.searchView",
+          "name": "FastSearch"
+        }
+      ]
+    }
   },
   "scripts": {
     "compile": "node esbuild.mjs",

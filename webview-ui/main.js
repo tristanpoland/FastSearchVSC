@@ -4,12 +4,14 @@
 
   // ── State ──
   let currentMode = 'natural';
-  let currentResults = null;
+  let currentResults = { files: [], totalMatches: 0, truncated: false, elapsed: 0 };
   let currentFileId = null;
   let currentSearchQuery = '';
   let selectedFileIndex = -1;
   let sortOrder = 'matches'; // 'matches' | 'recent' | 'alpha'
   let recentFiles = {};      // relativePath -> timestamp (last viewed)
+  let currentSearchId = 0;   // tracks which search we're receiving results for
+  let isSearching = false;
 
   // ── DOM Elements ──
   const searchInput = document.getElementById('search-input');
@@ -17,9 +19,7 @@
   const modeLabel = document.getElementById('mode-label');
   const reindexBtn = document.getElementById('reindex-btn');
   const fileListPanel = document.getElementById('file-list');
-  const codePreviewPanel = document.getElementById('code-preview');
   const statusText = document.getElementById('status-text');
-  const divider = document.getElementById('divider');
 
   // ── Language Icons (SVG-based) ──
   const LANG_ICONS = {
@@ -61,19 +61,28 @@
   // ── Search ──
   let debounceTimer = null;
 
+  function doSearch() {
+    const query = searchInput.value.trim();
+    if (query.length > 0) {
+      currentSearchQuery = query;
+      currentSearchId++;
+      isSearching = true;
+      // Clear previous results and show searching state
+      currentResults = { files: [], totalMatches: 0, truncated: false, elapsed: 0 };
+      selectedFileIndex = -1;
+      fileListPanel.innerHTML = '';
+      ensureSummaryRow();
+      vscode.postMessage({ type: 'search', payload: { query, mode: currentMode } });
+    } else {
+      currentResults = { files: [], totalMatches: 0, truncated: false, elapsed: 0 };
+      isSearching = false;
+      showFilePlaceholder();
+    }
+  }
+
   searchInput.addEventListener('input', () => {
     if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
-      const query = searchInput.value.trim();
-      if (query.length > 0) {
-        currentSearchQuery = query;
-        vscode.postMessage({ type: 'search', payload: { query, mode: currentMode } });
-      } else {
-        currentResults = null;
-        showFilePlaceholder();
-        showPreviewPlaceholder();
-      }
-    }, 200);
+    debounceTimer = setTimeout(doSearch, 200);
   });
 
   searchInput.addEventListener('keydown', (e) => {
@@ -85,13 +94,8 @@
       navigateFileList(-1);
     } else if (e.key === 'Enter') {
       e.preventDefault();
-      // Immediate search
       if (debounceTimer) clearTimeout(debounceTimer);
-      const query = searchInput.value.trim();
-      if (query.length > 0) {
-        currentSearchQuery = query;
-        vscode.postMessage({ type: 'search', payload: { query, mode: currentMode } });
-      }
+      doSearch();
     } else if (e.key === 'Escape') {
       searchInput.blur();
     }
@@ -101,10 +105,9 @@
     currentMode = currentMode === 'natural' ? 'regex' : 'natural';
     modeLabel.textContent = currentMode === 'natural' ? 'Natural' : 'Regex';
     modeToggle.classList.toggle('regex-mode', currentMode === 'regex');
-    // Re-search with new mode
-    const query = searchInput.value.trim();
-    if (query.length > 0) {
-      vscode.postMessage({ type: 'search', payload: { query, mode: currentMode } });
+    if (searchInput.value.trim().length > 0) {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      doSearch();
     }
   });
 
@@ -114,7 +117,7 @@
 
   // ── File list navigation ──
   function navigateFileList(delta) {
-    if (!currentResults || currentResults.files.length === 0) return;
+    if (currentResults.files.length === 0) return;
     const newIndex = Math.max(0, Math.min(currentResults.files.length - 1, selectedFileIndex + delta));
     selectFile(newIndex);
   }
@@ -124,7 +127,6 @@
     items.forEach((el, i) => {
       el.classList.toggle('selected', i === selectedFileIndex);
     });
-    // Scroll selected into view
     const selected = items[selectedFileIndex];
     if (selected) {
       selected.scrollIntoView({ block: 'nearest' });
@@ -143,7 +145,7 @@
           const ta = recentFiles[a.relativePath] || 0;
           const tb = recentFiles[b.relativePath] || 0;
           if (tb !== ta) return tb - ta;
-          return b.matchCount - a.matchCount; // fallback
+          return b.matchCount - a.matchCount;
         });
         break;
       case 'alpha':
@@ -158,193 +160,147 @@
     saveState();
   }
 
-  // ── Render file list ──
-  function renderFileList(results) {
-    currentResults = results;
-    currentResults.files = sortFiles(results.files);
-    selectedFileIndex = -1;
-    fileListPanel.innerHTML = '';
+  // ── Summary row (sticky header) ──
+  function ensureSummaryRow() {
+    let summaryRow = fileListPanel.querySelector('.file-list-summary');
+    if (!summaryRow) {
+      summaryRow = document.createElement('div');
+      summaryRow.className = 'file-list-summary';
 
-    if (results.files.length === 0) {
-      fileListPanel.innerHTML = `
-        <div class="no-results">
-          <p>No results found</p>
-        </div>`;
-      showPreviewPlaceholder();
-      return;
+      const summaryText = document.createElement('span');
+      summaryText.id = 'summary-text';
+      summaryRow.appendChild(summaryText);
+
+      const sortSelect = document.createElement('select');
+      sortSelect.className = 'sort-select';
+      sortSelect.title = 'Sort order';
+      sortSelect.innerHTML = `
+        <option value="matches"${sortOrder === 'matches' ? ' selected' : ''}>Most matches</option>
+        <option value="recent"${sortOrder === 'recent' ? ' selected' : ''}>Recent first</option>
+        <option value="alpha"${sortOrder === 'alpha' ? ' selected' : ''}>A → Z</option>
+      `;
+      sortSelect.addEventListener('change', () => {
+        sortOrder = sortSelect.value;
+        saveState();
+        rerenderFileList();
+      });
+      summaryRow.appendChild(sortSelect);
+
+      fileListPanel.insertBefore(summaryRow, fileListPanel.firstChild);
     }
+    updateSummaryText();
+  }
 
-    // Summary row with sort dropdown
-    const summaryRow = document.createElement('div');
-    summaryRow.className = 'file-list-summary';
-
-    const summaryText = document.createElement('span');
-    summaryText.textContent = `${results.totalMatches} match${results.totalMatches !== 1 ? 'es' : ''} in ${results.files.length} file${results.files.length !== 1 ? 's' : ''} (${results.elapsed.toFixed(1)}ms)`;
-    if (results.truncated) {
-      summaryText.textContent += ' (truncated)';
-    }
-    summaryRow.appendChild(summaryText);
-
-    const sortSelect = document.createElement('select');
-    sortSelect.className = 'sort-select';
-    sortSelect.title = 'Sort order';
-    sortSelect.innerHTML = `
-      <option value="matches"${sortOrder === 'matches' ? ' selected' : ''}>Most matches</option>
-      <option value="recent"${sortOrder === 'recent' ? ' selected' : ''}>Recent first</option>
-      <option value="alpha"${sortOrder === 'alpha' ? ' selected' : ''}>A → Z</option>
-    `;
-    sortSelect.addEventListener('change', () => {
-      sortOrder = sortSelect.value;
-      saveState();
-      if (currentResults) {
-        renderFileList(currentResults);
+  function updateSummaryText() {
+    const el = document.getElementById('summary-text');
+    if (!el) return;
+    if (isSearching) {
+      el.textContent = `Searching... ${currentResults.totalMatches} match${currentResults.totalMatches !== 1 ? 'es' : ''} in ${currentResults.files.length} file${currentResults.files.length !== 1 ? 's' : ''}`;
+    } else if (currentResults.files.length === 0 && currentSearchQuery) {
+      el.textContent = 'No results found';
+    } else {
+      let text = `${currentResults.totalMatches} match${currentResults.totalMatches !== 1 ? 'es' : ''} in ${currentResults.files.length} file${currentResults.files.length !== 1 ? 's' : ''}`;
+      if (currentResults.elapsed > 0) {
+        text += ` (${currentResults.elapsed.toFixed(1)}ms)`;
       }
-    });
-    summaryRow.appendChild(sortSelect);
+      if (currentResults.truncated) {
+        text += ' (truncated)';
+      }
+      el.textContent = text;
+    }
+  }
 
-    fileListPanel.appendChild(summaryRow);
+  // ── Append a single file result ──
+  function appendFileItem(file) {
+    const index = currentResults.files.indexOf(file);
+    if (index === -1) return;
 
-    // File items
-    for (let i = 0; i < currentResults.files.length; i++) {
-      const file = currentResults.files[i];
-      const item = document.createElement('div');
-      item.className = 'file-item';
-      item.dataset.index = String(i);
+    const item = createFileItem(file, index);
+    fileListPanel.appendChild(item);
 
-      const parts = file.relativePath.replace(/\\/g, '/').split('/');
-      const fileName = parts.pop() || '';
-      const dirName = parts.join('/');
+    // Auto-select first result
+    if (index === 0) {
+      selectFile(0);
+    }
+  }
 
-      item.innerHTML = `
+  function createFileItem(file, index) {
+    const item = document.createElement('div');
+    item.className = 'file-item';
+    item.dataset.index = String(index);
+    item.dataset.fileId = String(file.fileId);
+
+    const parts = file.relativePath.replace(/\\/g, '/').split('/');
+    const fileName = parts.pop() || '';
+    const dirName = parts.join('/');
+
+    item.innerHTML = `
+      <div class="file-info">
         ${getLangIcon(file.language)}
         <span class="file-name">${escapeHtml(fileName)}</span>
         <span class="file-dir" title="${escapeHtml(file.relativePath)}">${dirName ? escapeHtml(dirName) + '/' : ''}</span>
+      </div>
+      <div class="file-actions">
         <span class="match-badge">${file.matchCount}</span>
-      `;
+        <button class="open-editor-btn" title="Open in full editor">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M14 1H2a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1zm-1 12H3V3h10v10zM5 5h6v1H5V5zm0 3h6v1H5V8zm0 3h4v1H5v-1z"/>
+          </svg>
+        </button>
+      </div>
+    `;
 
-      item.addEventListener('click', () => {
-        selectFile(i);
-      });
+    item.addEventListener('click', (e) => {
+      if (e.target.closest('.open-editor-btn')) return;
+      selectFileByFileId(file.fileId);
+    });
 
+    const openBtn = item.querySelector('.open-editor-btn');
+    openBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      trackRecentFile(file.relativePath);
+      vscode.postMessage({ type: 'openInEditor', payload: { fileId: file.fileId } });
+    });
+
+    return item;
+  }
+
+  // ── Full re-render (used when sort order changes) ──
+  function rerenderFileList() {
+    currentResults.files = sortFiles(currentResults.files);
+    selectedFileIndex = -1;
+
+    // Remove all file items, keep summary
+    const items = fileListPanel.querySelectorAll('.file-item');
+    items.forEach(el => el.remove());
+
+    for (let i = 0; i < currentResults.files.length; i++) {
+      const item = createFileItem(currentResults.files[i], i);
       fileListPanel.appendChild(item);
     }
 
-    // Auto-select first file
-    selectFile(0);
+    updateSummaryText();
+
+    if (currentResults.files.length > 0) {
+      selectFile(0);
+    }
   }
 
   function selectFile(index) {
-    if (!currentResults || index < 0 || index >= currentResults.files.length) return;
+    if (index < 0 || index >= currentResults.files.length) return;
     selectedFileIndex = index;
     highlightSelectedFile();
     const file = currentResults.files[index];
     currentFileId = file.fileId;
     trackRecentFile(file.relativePath);
-    vscode.postMessage({ type: 'requestFileContent', payload: { fileId: file.fileId } });
+    vscode.postMessage({ type: 'openFile', payload: { fileId: file.fileId } });
   }
 
-  // ── Render code preview ──
-  function renderCodePreview(fileData, searchResults) {
-    codePreviewPanel.innerHTML = '';
-
-    const header = document.createElement('div');
-    header.className = 'preview-header';
-    header.textContent = fileData.relativePath;
-    codePreviewPanel.appendChild(header);
-
-    const codeContainer = document.createElement('div');
-    codeContainer.className = 'code-container';
-
-    const lines = fileData.content.split('\n');
-
-    // Find match lines for this file
-    let matchLines = new Map(); // lineNumber -> [{start, end}]
-    if (searchResults && searchResults.files) {
-      const fileResult = searchResults.files.find(f => f.fileId === fileData.fileId);
-      if (fileResult) {
-        for (const match of fileResult.matches) {
-          if (!matchLines.has(match.lineNumber)) {
-            matchLines.set(match.lineNumber, []);
-          }
-          matchLines.get(match.lineNumber).push({
-            start: match.matchStart,
-            end: match.matchEnd,
-          });
-        }
-      }
+  function selectFileByFileId(fileId) {
+    const index = currentResults.files.findIndex(f => f.fileId === fileId);
+    if (index !== -1) {
+      selectFile(index);
     }
-
-    let firstMatchElement = null;
-
-    for (let i = 0; i < lines.length; i++) {
-      const lineNum = i + 1;
-      const lineEl = document.createElement('div');
-      const isMatch = matchLines.has(lineNum);
-      lineEl.className = 'code-line' + (isMatch ? ' match-line' : '');
-
-      const lineNumEl = document.createElement('span');
-      lineNumEl.className = 'line-number';
-      lineNumEl.textContent = String(lineNum);
-      lineEl.appendChild(lineNumEl);
-
-      const lineContentEl = document.createElement('span');
-      lineContentEl.className = 'line-content';
-
-      if (isMatch) {
-        // Highlight matches within the line
-        const highlights = matchLines.get(lineNum);
-        lineContentEl.innerHTML = highlightMatches(lines[i], highlights);
-        if (!firstMatchElement) {
-          firstMatchElement = lineEl;
-        }
-      } else {
-        lineContentEl.textContent = lines[i];
-      }
-
-      lineEl.appendChild(lineContentEl);
-      codeContainer.appendChild(lineEl);
-    }
-
-    codePreviewPanel.appendChild(codeContainer);
-
-    // Scroll to first match
-    if (firstMatchElement) {
-      setTimeout(() => {
-        firstMatchElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }, 50);
-    }
-  }
-
-  function highlightMatches(lineText, highlights) {
-    if (!highlights || highlights.length === 0) return escapeHtml(lineText);
-
-    // Sort highlights by start position
-    highlights.sort((a, b) => a.start - b.start);
-
-    let result = '';
-    let lastEnd = 0;
-
-    for (const h of highlights) {
-      const start = Math.max(h.start, lastEnd);
-      const end = Math.min(h.end, lineText.length);
-      if (start >= end) continue;
-
-      // Text before highlight
-      if (start > lastEnd) {
-        result += escapeHtml(lineText.substring(lastEnd, start));
-      }
-
-      // Highlighted text
-      result += '<mark class="search-match">' + escapeHtml(lineText.substring(start, end)) + '</mark>';
-      lastEnd = end;
-    }
-
-    // Remaining text
-    if (lastEnd < lineText.length) {
-      result += escapeHtml(lineText.substring(lastEnd));
-    }
-
-    return result;
   }
 
   // ── Placeholders ──
@@ -358,16 +314,6 @@
       </div>`;
   }
 
-  function showPreviewPlaceholder() {
-    codePreviewPanel.innerHTML = `
-      <div class="placeholder-message">
-        <svg width="48" height="48" viewBox="0 0 16 16" fill="currentColor" opacity="0.3">
-          <path d="M14 1H2a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1zm-1 12H3V3h10v10z"/>
-        </svg>
-        <p>Select a file to preview</p>
-      </div>`;
-  }
-
   // ── Utility ──
   function escapeHtml(str) {
     return str
@@ -378,42 +324,42 @@
       .replace(/'/g, '&#039;');
   }
 
-  // ── Divider drag-to-resize ──
-  let isDragging = false;
-
-  divider.addEventListener('mousedown', (e) => {
-    isDragging = true;
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
-    e.preventDefault();
-  });
-
-  document.addEventListener('mousemove', (e) => {
-    if (!isDragging) return;
-    const containerRect = fileListPanel.parentElement.getBoundingClientRect();
-    const newWidth = Math.max(150, Math.min(e.clientX - containerRect.left, containerRect.width - 150));
-    fileListPanel.style.width = newWidth + 'px';
-    fileListPanel.style.flexShrink = '0';
-    fileListPanel.style.flexGrow = '0';
-  });
-
-  document.addEventListener('mouseup', () => {
-    if (isDragging) {
-      isDragging = false;
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-    }
-  });
-
   // ── Message handling ──
   window.addEventListener('message', (event) => {
     const message = event.data;
     switch (message.type) {
-      case 'searchResults':
-        renderFileList(message.payload);
+      case 'searchResultBatch': {
+        const { searchId, file, totalMatches, fileCount } = message.payload;
+        // Ignore results from stale searches
+        if (searchId !== currentSearchId) break;
+
+        currentResults.files.push(file);
+        currentResults.totalMatches = totalMatches;
+        updateSummaryText();
+        appendFileItem(file);
         break;
-      case 'fileContent':
-        renderCodePreview(message.payload, currentResults);
+      }
+      case 'searchComplete': {
+        const { searchId, totalMatches, fileCount, truncated, elapsed } = message.payload;
+        if (searchId !== currentSearchId) break;
+
+        isSearching = false;
+        currentResults.totalMatches = totalMatches;
+        currentResults.truncated = truncated;
+        currentResults.elapsed = elapsed;
+        updateSummaryText();
+
+        // Apply sort now that all results are in
+        if (sortOrder !== 'matches' || currentResults.files.length > 0) {
+          rerenderFileList();
+        }
+        break;
+      }
+      case 'searchResults':
+        // Legacy full-result message (fallback)
+        isSearching = false;
+        currentResults = message.payload;
+        rerenderFileList();
         break;
       case 'indexStatus': {
         const status = message.payload;
@@ -430,6 +376,7 @@
         break;
       }
       case 'error':
+        isSearching = false;
         statusText.textContent = `Error: ${message.payload.message}`;
         statusText.className = 'status-error';
         break;
@@ -447,7 +394,6 @@
   }
 
   // ── Init ──
-  // Restore state
   const previousState = vscode.getState();
   if (previousState) {
     if (previousState.query) {
@@ -467,14 +413,10 @@
     }
   }
 
-  // Save state on input change
   searchInput.addEventListener('input', () => {
     saveState();
   });
 
-  // Notify extension we're ready
   vscode.postMessage({ type: 'ready' });
-
-  // Focus search input
   searchInput.focus();
 })();

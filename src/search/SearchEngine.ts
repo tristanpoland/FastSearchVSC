@@ -1,4 +1,4 @@
-import { SearchRequest, SearchResult } from '../types.js';
+import { SearchRequest, SearchResult, ContentReader, SearchResultCallback } from '../types.js';
 import { InvertedIndex } from '../indexer/InvertedIndex.js';
 import { RegexSearch } from './RegexSearch.js';
 import { NaturalQueryParser } from './NaturalQueryParser.js';
@@ -8,21 +8,21 @@ export class SearchEngine {
   private regexSearch: RegexSearch;
   private naturalSearch: NaturalSearch;
 
-  constructor(private index: InvertedIndex) {
-    this.regexSearch = new RegexSearch(index.getRawContents(), index.getFiles());
-    this.naturalSearch = new NaturalSearch(index);
+  constructor(index: InvertedIndex, readContent: ContentReader) {
+    this.regexSearch = new RegexSearch(index.getFiles(), readContent);
+    this.naturalSearch = new NaturalSearch(index, readContent);
   }
 
-  search(request: SearchRequest): SearchResult {
+  async search(request: SearchRequest, onResult?: SearchResultCallback): Promise<SearchResult> {
     const maxResults = request.maxResults ?? 1000;
     const start = performance.now();
 
     let files;
     if (request.mode === 'regex') {
-      files = this.regexSearch.execute(request.query, maxResults);
+      files = await this.regexSearch.execute(request.query, maxResults, onResult);
     } else {
       const ast = NaturalQueryParser.parse(request.query);
-      files = this.naturalSearch.execute(ast, maxResults);
+      files = await this.naturalSearch.execute(ast, maxResults, onResult);
     }
 
     const elapsed = performance.now() - start;

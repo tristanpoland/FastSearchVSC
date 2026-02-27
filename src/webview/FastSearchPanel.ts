@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { WebviewMessage } from '../types.js';
+import { WebviewMessage, SearchResult, FileSearchResult } from '../types.js';
 import { IndexManager } from '../indexer/IndexManager.js';
 import { handleWebviewMessage } from './messageHandler.js';
 
@@ -12,76 +12,199 @@ function getNonce(): string {
   return text;
 }
 
-export class FastSearchPanel {
-  public static currentPanel: FastSearchPanel | undefined;
-  private panel: vscode.WebviewPanel;
-  private disposables: vscode.Disposable[] = [];
+const matchHighlightDecoration = vscode.window.createTextEditorDecorationType({
+  backgroundColor: new vscode.ThemeColor('editor.findMatchHighlightBackground'),
+  border: '1px solid',
+  borderColor: new vscode.ThemeColor('editor.findMatchHighlightBorder'),
+  rangeBehavior: vscode.DecorationRangeBehavior.ClosedClosed,
+});
 
-  static createOrShow(extensionUri: vscode.Uri, indexManager: IndexManager): void {
-    const column = vscode.ViewColumn.One;
+const matchLineDecoration = vscode.window.createTextEditorDecorationType({
+  backgroundColor: new vscode.ThemeColor('editor.findRangeHighlightBackground'),
+  isWholeLine: true,
+});
 
-    if (FastSearchPanel.currentPanel) {
-      FastSearchPanel.currentPanel.panel.reveal(column);
-      return;
-    }
+export class FastSearchViewProvider implements vscode.WebviewViewProvider {
+  public static readonly viewType = 'fastsearch.searchView';
 
-    const panel = vscode.window.createWebviewPanel(
-      'fastSearchPanel',
-      'FastSearch',
-      column,
-      {
-        enableScripts: true,
-        retainContextWhenHidden: true,
-        localResourceRoots: [
-          vscode.Uri.joinPath(extensionUri, 'dist'),
-          vscode.Uri.joinPath(extensionUri, 'webview-ui'),
-        ],
+  private view: vscode.WebviewView | undefined;
+  private lastSearchResult: SearchResult | undefined;
+  private previewEditor: vscode.TextEditor | undefined;
+  private currentSearchId = 0;
+
+  constructor(
+    private extensionUri: vscode.Uri,
+    private indexManager: IndexManager
+  ) {}
+
+  resolveWebviewView(
+    webviewView: vscode.WebviewView,
+    _context: vscode.WebviewViewResolveContext,
+    _token: vscode.CancellationToken
+  ): void {
+    this.view = webviewView;
+
+    webviewView.webview.options = {
+      enableScripts: true,
+      localResourceRoots: [
+        vscode.Uri.joinPath(this.extensionUri, 'dist'),
+        vscode.Uri.joinPath(this.extensionUri, 'webview-ui'),
+      ],
+    };
+
+    webviewView.webview.html = this.getHtmlForWebview(webviewView.webview);
+
+    webviewView.webview.onDidReceiveMessage(async (message: WebviewMessage) => {
+      switch (message.type) {
+        case 'openFile':
+          await this.openFilePreview(message.payload.fileId);
+          break;
+        case 'openInEditor':
+          await this.openFileInEditor(message.payload.fileId);
+          break;
+        case 'search': {
+          const searchId = ++this.currentSearchId;
+          try {
+            const start = performance.now();
+            let fileCount = 0;
+            let totalMatches = 0;
+
+            const result = await this.indexManager.search(
+              message.payload,
+              (file: FileSearchResult, matchesSoFar: number) => {
+                // Abort if a newer search has started
+                if (searchId !== this.currentSearchId) return false;
+
+                fileCount++;
+                totalMatches = matchesSoFar;
+
+                webviewView.webview.postMessage({
+                  type: 'searchResultBatch',
+                  payload: { searchId, file, totalMatches: matchesSoFar, fileCount },
+                });
+
+                return true;
+              }
+            );
+
+            // Only send completion if this search wasn't superseded
+            if (searchId === this.currentSearchId) {
+              this.lastSearchResult = result;
+              const elapsed = performance.now() - start;
+              webviewView.webview.postMessage({
+                type: 'searchComplete',
+                payload: {
+                  searchId,
+                  totalMatches: result.totalMatches,
+                  fileCount: result.files.length,
+                  truncated: result.truncated,
+                  elapsed,
+                },
+              });
+            }
+          } catch (err: unknown) {
+            if (searchId === this.currentSearchId) {
+              const errorMessage = err instanceof Error ? err.message : String(err);
+              webviewView.webview.postMessage({ type: 'error', payload: { message: errorMessage } });
+            }
+          }
+          break;
+        }
+        default:
+          await handleWebviewMessage(message, this.indexManager, webviewView.webview);
+          break;
       }
-    );
+    });
 
-    FastSearchPanel.currentPanel = new FastSearchPanel(panel, extensionUri, indexManager);
-  }
-
-  static registerSerializer(context: vscode.ExtensionContext, indexManager: IndexManager): void {
-    vscode.window.registerWebviewPanelSerializer('fastSearchPanel', {
-      async deserializeWebviewPanel(panel: vscode.WebviewPanel, _state: unknown) {
-        FastSearchPanel.currentPanel = new FastSearchPanel(
-          panel,
-          context.extensionUri,
-          indexManager
-        );
-      },
+    this.indexManager.onStatusChange(status => {
+      webviewView.webview.postMessage({ type: 'indexStatus', payload: status });
     });
   }
 
-  private constructor(
-    panel: vscode.WebviewPanel,
-    private extensionUri: vscode.Uri,
-    private indexManager: IndexManager
-  ) {
-    this.panel = panel;
-    this.panel.webview.html = this.getHtmlForWebview();
-    this.panel.iconPath = new vscode.ThemeIcon('search');
+  private async openFilePreview(fileId: number): Promise<void> {
+    const file = this.indexManager.getFileEntry(fileId);
+    if (!file) return;
 
-    this.panel.webview.onDidReceiveMessage(
-      (message: WebviewMessage) => {
-        handleWebviewMessage(message, this.indexManager, this.panel.webview);
-      },
-      null,
-      this.disposables
-    );
-
-    this.disposables.push(
-      this.indexManager.onStatusChange(status => {
-        this.panel.webview.postMessage({ type: 'indexStatus', payload: status });
-      })
-    );
-
-    this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
+    const uri = vscode.Uri.file(file.absolutePath);
+    try {
+      const doc = await vscode.workspace.openTextDocument(uri);
+      const editor = await vscode.window.showTextDocument(doc, {
+        viewColumn: vscode.ViewColumn.One,
+        preview: true,
+        preserveFocus: true,
+      });
+      this.previewEditor = editor;
+      this.applyMatchDecorations(editor, fileId);
+    } catch {
+      // File may have been deleted
+    }
   }
 
-  private getHtmlForWebview(): string {
-    const webview = this.panel.webview;
+  private async openFileInEditor(fileId: number): Promise<void> {
+    const file = this.indexManager.getFileEntry(fileId);
+    if (!file) return;
+
+    const uri = vscode.Uri.file(file.absolutePath);
+    try {
+      const doc = await vscode.workspace.openTextDocument(uri);
+      const editor = await vscode.window.showTextDocument(doc, {
+        viewColumn: vscode.ViewColumn.One,
+        preview: false,
+        preserveFocus: false,
+      });
+      this.previewEditor = editor;
+      this.applyMatchDecorations(editor, fileId);
+    } catch {
+      // File may have been deleted
+    }
+  }
+
+  private applyMatchDecorations(editor: vscode.TextEditor, fileId: number): void {
+    if (!this.lastSearchResult) return;
+
+    const fileResult = this.lastSearchResult.files.find(f => f.fileId === fileId);
+    if (!fileResult || fileResult.matches.length === 0) {
+      editor.setDecorations(matchHighlightDecoration, []);
+      editor.setDecorations(matchLineDecoration, []);
+      return;
+    }
+
+    const matchRanges: vscode.DecorationOptions[] = [];
+    const lineRanges: vscode.DecorationOptions[] = [];
+    const seenLines = new Set<number>();
+
+    for (const match of fileResult.matches) {
+      const line = match.lineNumber - 1;
+      const startCol = match.matchStart;
+      const endCol = match.matchEnd;
+
+      matchRanges.push({
+        range: new vscode.Range(line, startCol, line, endCol),
+      });
+
+      if (!seenLines.has(line)) {
+        seenLines.add(line);
+        lineRanges.push({
+          range: new vscode.Range(line, 0, line, 0),
+        });
+      }
+    }
+
+    editor.setDecorations(matchHighlightDecoration, matchRanges);
+    editor.setDecorations(matchLineDecoration, lineRanges);
+
+    // Scroll to first match
+    if (fileResult.matches.length > 0) {
+      const firstMatch = fileResult.matches[0];
+      const pos = new vscode.Position(firstMatch.lineNumber - 1, firstMatch.matchStart);
+      editor.revealRange(
+        new vscode.Range(pos, pos),
+        vscode.TextEditorRevealType.InCenter
+      );
+    }
+  }
+
+  private getHtmlForWebview(webview: vscode.Webview): string {
     const nonce = getNonce();
 
     const scriptUri = webview.asWebviewUri(
@@ -112,7 +235,7 @@ export class FastSearchPanel {
           <svg class="search-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
             <path d="M15.25 13.68l-3.46-3.46a6.02 6.02 0 0 0 1.27-3.72 6 6 0 1 0-6 6 6.02 6.02 0 0 0 3.72-1.27l3.46 3.46a1.11 1.11 0 1 0 1.57-1.57l-.56.56zM2.06 6.5a4.44 4.44 0 1 1 4.44 4.44A4.45 4.45 0 0 1 2.06 6.5z"/>
           </svg>
-          <input type="text" id="search-input" class="search-input" placeholder="Search files... (use quotes for exact, - to exclude, OR for union)" autofocus />
+          <input type="text" id="search-input" class="search-input" placeholder="Search... (quotes, -, OR, file:)" autofocus />
         </div>
         <button id="mode-toggle" class="mode-toggle" title="Toggle search mode (Natural / Regex)">
           <span id="mode-label">Natural</span>
@@ -124,22 +247,13 @@ export class FastSearchPanel {
         </button>
       </div>
     </div>
-    <div class="content-panels">
+    <div class="file-list-container">
       <div class="file-list-panel" id="file-list">
         <div class="placeholder-message">
           <svg width="48" height="48" viewBox="0 0 16 16" fill="currentColor" opacity="0.3">
             <path d="M15.25 13.68l-3.46-3.46a6.02 6.02 0 0 0 1.27-3.72 6 6 0 1 0-6 6 6.02 6.02 0 0 0 3.72-1.27l3.46 3.46a1.11 1.11 0 1 0 1.57-1.57l-.56.56zM2.06 6.5a4.44 4.44 0 1 1 4.44 4.44A4.45 4.45 0 0 1 2.06 6.5z"/>
           </svg>
           <p>Type to search across your project</p>
-        </div>
-      </div>
-      <div class="divider" id="divider"></div>
-      <div class="code-preview-panel" id="code-preview">
-        <div class="placeholder-message">
-          <svg width="48" height="48" viewBox="0 0 16 16" fill="currentColor" opacity="0.3">
-            <path d="M14 1H2a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1zm-1 12H3V3h10v10z"/>
-          </svg>
-          <p>Select a file to preview</p>
         </div>
       </div>
     </div>
@@ -150,14 +264,5 @@ export class FastSearchPanel {
   <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;
-  }
-
-  private dispose(): void {
-    FastSearchPanel.currentPanel = undefined;
-    this.panel.dispose();
-    for (const d of this.disposables) {
-      d.dispose();
-    }
-    this.disposables = [];
   }
 }
