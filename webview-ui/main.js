@@ -115,6 +115,10 @@
     vscode.postMessage({ type: 'requestReindex' });
   });
 
+  document.getElementById('clear-index-btn').addEventListener('click', () => {
+    vscode.postMessage({ type: 'clearIndex' });
+  });
+
   // ── File list navigation ──
   function navigateFileList(delta) {
     if (currentResults.files.length === 0) return;
@@ -363,15 +367,20 @@
         break;
       case 'indexStatus': {
         const status = message.payload;
+        const clearBtn = document.getElementById('clear-index-btn');
         if (status.status === 'building') {
           statusText.textContent = `Indexing... (${status.fileCount} files)`;
           statusText.className = 'status-building';
+          if (clearBtn) clearBtn.style.display = 'none';
         } else if (status.status === 'updating') {
-          statusText.textContent = `Updating index... (${status.fileCount} files)`;
+          statusText.textContent = `Updating... (${status.fileCount} files)`;
           statusText.className = 'status-updating';
+          if (clearBtn) clearBtn.style.display = 'none';
         } else {
-          statusText.textContent = `Index ready (${status.fileCount} files)`;
+          const terms = status.termCount ? `, ${(status.termCount / 1000).toFixed(1)}k terms` : '';
+          statusText.textContent = `${status.fileCount} files${terms}`;
           statusText.className = 'status-ready';
+          if (clearBtn) clearBtn.style.display = status.fileCount > 0 ? 'flex' : 'none';
         }
         break;
       }

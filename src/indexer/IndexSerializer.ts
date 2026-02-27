@@ -44,6 +44,14 @@ export class IndexSerializer {
     await vscode.workspace.fs.writeFile(termsUri, Buffer.from(termsContent, 'utf-8'));
   }
 
+  async deleteIndex(): Promise<void> {
+    try {
+      await vscode.workspace.fs.delete(this.storageUri, { recursive: true, useTrash: false });
+    } catch {
+      // May not exist
+    }
+  }
+
   async load(workspaceRoot: string): Promise<{
     files: FileEntry[];
     dirHashes: DirHashEntry[];

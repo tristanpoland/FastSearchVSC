@@ -119,6 +119,12 @@ export class FastSearchViewProvider implements vscode.WebviewViewProvider {
     this.indexManager.onStatusChange(status => {
       webviewView.webview.postMessage({ type: 'indexStatus', payload: status });
     });
+
+    // Push current status immediately so webview doesn't stay on "Initializing..."
+    webviewView.webview.postMessage({
+      type: 'indexStatus',
+      payload: this.indexManager.getCurrentStatus(),
+    });
   }
 
   private async openFilePreview(fileId: number): Promise<void> {
@@ -259,6 +265,11 @@ export class FastSearchViewProvider implements vscode.WebviewViewProvider {
     </div>
     <div class="status-bar" id="status-bar">
       <span id="status-text">Initializing...</span>
+      <button id="clear-index-btn" class="clear-index-btn" title="Clear index" style="display:none;">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M10 3h3v1h-1v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4H3V3h3V2a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v1zM5 4v9h6V4H5zm2-1V2H7v1h2z"/>
+        </svg>
+      </button>
     </div>
   </div>
   <script nonce="${nonce}" src="${scriptUri}"></script>

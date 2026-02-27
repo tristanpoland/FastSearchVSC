@@ -74,6 +74,7 @@ export interface IndexStatus {
   status: 'building' | 'ready' | 'updating';
   progress: number;
   fileCount: number;
+  termCount: number;
 }
 
 export type ContentReader = (fileId: number) => Promise<string | undefined>;
@@ -95,6 +96,7 @@ export type WebviewMessage =
   | { type: 'openFile'; payload: { fileId: number } }
   | { type: 'openInEditor'; payload: { fileId: number } }
   | { type: 'requestReindex' }
+  | { type: 'clearIndex' }
   | { type: 'ready' };
 
 export interface SerializedIndex {

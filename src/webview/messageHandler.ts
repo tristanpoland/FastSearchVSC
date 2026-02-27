@@ -38,6 +38,10 @@ export async function handleWebviewMessage(
       indexManager.fullBuild();
       break;
     }
+    case 'clearIndex': {
+      await indexManager.clearIndex();
+      break;
+    }
     case 'ready': {
       webview.postMessage({
         type: 'indexStatus',

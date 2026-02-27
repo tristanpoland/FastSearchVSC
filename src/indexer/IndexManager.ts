@@ -56,7 +56,7 @@ export class IndexManager implements vscode.Disposable {
   private debounceTimers: Map<string, NodeJS.Timeout> = new Map();
   private statusEmitter = new vscode.EventEmitter<IndexStatus>();
   public onStatusChange = this.statusEmitter.event;
-  private currentStatus: IndexStatus = { status: 'building', progress: 0, fileCount: 0 };
+  private currentStatus: IndexStatus = { status: 'building', progress: 0, fileCount: 0, termCount: 0 };
   private workspaceRoot: vscode.Uri | undefined;
 
   constructor(private context: vscode.ExtensionContext) {
@@ -514,9 +514,18 @@ export class IndexManager implements vscode.Disposable {
     return this.currentStatus;
   }
 
-  private setStatus(status: IndexStatus): void {
-    this.currentStatus = status;
-    this.statusEmitter.fire(status);
+  async clearIndex(): Promise<void> {
+    this.index.clear();
+    this.hashManager.clear();
+    this.searchEngine = undefined;
+    await this.serializer.deleteIndex();
+    this.setStatus({ status: 'ready', progress: 100, fileCount: 0 });
+  }
+
+  private setStatus(status: Omit<IndexStatus, 'termCount'>): void {
+    const full: IndexStatus = { ...status, termCount: this.index.getTerms().size };
+    this.currentStatus = full;
+    this.statusEmitter.fire(full);
   }
 
   dispose(): void {
